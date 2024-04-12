@@ -1,0 +1,73 @@
+package main
+
+import (
+    "fmt"
+    "net/http"
+    "os"
+
+    "github.com/gorilla/mux"
+    "github.com/ory/oathkeeper-client-go/client"
+    "github.com/ory/oathkeeper-client-go/client/api"
+    "github.com/ory/oathkeeper-client-go/models"
+)
+
+func main() {
+    // Create a new router
+    r := mux.NewRouter()
+
+    // Define the home route (unprotected)
+    r.HandleFunc("/", homeHandler).Methods("GET")
+
+    // Define the protected route
+    r.HandleFunc("/protected", protectedHandler).Methods("GET")
+
+    // Create an Oathkeeper client
+    oathkeeperClient := client.NewHTTPClientWithConfig(nil, &client.TransportConfig{
+        Host:     "http://localhost:4456",
+        BasePath: "/",
+        Schemes:  []string{"http"},
+    })
+
+    // Create an Oathkeeper API client
+    oathkeeperAPI := oathkeeperClient.API
+
+    // Define the Oathkeeper access rule for the protected route
+    accessRule := &models.SwaggerRule{
+        ID:          "protected-route-rule",
+        Description: "Access rule for the protected route",
+        Match: &models.SwaggerRuleMatch{
+            URL:     "http://localhost:8080/protected",
+            Methods: []string{"GET"},
+        },
+        Authenticators: []*models.SwaggerRuleHandler{
+            {
+                Handler: "oauth2_introspection",
+                Config: map[string]interface{}{
+                    "required_scope": []string{"protected"},
+                },
+            },
+        },
+        Authorizer: &models.SwaggerRuleHandler{
+            Handler: "allow",
+        },
+        Mutators: []*models.SwaggerRuleHandler{},
+    }
+
+    // Create the access rule in Oathkeeper
+    _, err := oathkeeperAPI.CreateRule(api.NewCreateRuleParams().WithBody(accessRule))
+    if err != nil {
+        fmt.Printf("Error creating access rule: %v\n", err)
+        os.Exit(1)
+    }
+
+    // Start the server
+    http.ListenAndServe(":8080", r)
+}
+
+func homeHandler(w http.ResponseWriter, r *http.Request) {
+    fmt.Fprintf(w, "Welcome to the home page!")
+}
+
+func protectedHandler(w http.ResponseWriter, r *http.Request) {
+    fmt.Fprintf(w, "This is a protected route. You are authenticated!")
+}
